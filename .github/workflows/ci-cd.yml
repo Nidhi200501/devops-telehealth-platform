@@ -13,24 +13,24 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: nidhi1112p
+          password: Utkarsh1-pan
       
-      - name: Build and push
+      - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/telehealth-app:latest
+          tags: nidhi1112p/telehealth-app:latest
       
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v0.1.10
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          host: 13.207.41.239
+          username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ~/devops-telehealth-platform
-            docker pull ${{ secrets.DOCKER_USERNAME }}/telehealth-app:latest
+            docker pull nidhi1112p/telehealth-app:latest
             docker compose down
             docker compose up -d
