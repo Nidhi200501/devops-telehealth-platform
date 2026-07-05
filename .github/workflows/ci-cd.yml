@@ -1,160 +1,44 @@
-name: CI/CD Pipeline - TeleHealth Platform
+name: Deploy to EC2
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-env:
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/telehealth-platform
-  NODE_VERSION: '18'
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  # ================================
-  # Job 1: Test
-  # ================================
-  test:
-    name: 🧪 Test
+  deploy:
     runs-on: ubuntu-latest
 
-    services:
-      mongodb:
-        image: mongo:6
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          username: nidhi1112p
+          password: Utkarsh1-pan
 
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🧪 Run tests with coverage
-        run: npm run test:coverage
-        env:
-          NODE_ENV: test
-          JWT_SECRET: test-secret-ci
-          DATABASE_URL: mongodb://localhost:27017/telehealth-test
-
-      - name: 📊 Upload coverage report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 30
-
-  # ================================
-  # Job 2: Build & Push Docker Image
-  # ================================
-  build:
-    name: 🐳 Build & Push
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔐 Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: 🏗️ Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: 🐳 Build and push Docker image
-        uses: docker/build-push-action@v5
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.DOCKER_IMAGE }}:latest
-            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: nidhi1112p/telehealth-app:latest
 
-  # ================================
-  # Job 3: Deploy to EC2
-  # ================================
-  deploy:
-    name: 🚀 Deploy to EC2
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔑 Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: 📤 Copy files to EC2
-        run: |
-          scp -o StrictHostKeyChecking=no \
-            docker-compose.yml nginx.conf .env.example \
-            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/telehealth/
-
-      - name: 🚀 Deploy on EC2
-        run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'DEPLOY_SCRIPT'
-            cd /home/${{ secrets.EC2_USER }}/telehealth
-
-            # Pull latest image
-            docker pull ${{ env.DOCKER_IMAGE }}:latest
-
-            # Stop existing containers
-            docker compose down || true
-
-            # Update image reference in docker-compose for production
-            export DOCKER_IMAGE=${{ env.DOCKER_IMAGE }}
-
-            # Start services
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: 13.207.41.239
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/devops-telehealth-platform
+            docker pull nidhi1112p/telehealth-app:latest
+            docker compose down
             docker compose up -d
-
-            # Wait for health check
-            echo "Waiting for application to be healthy..."
-            for i in {1..30}; do
-              if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
-                echo "✅ Application is healthy!"
-                exit 0
-              fi
-              echo "Waiting... ($i/30)"
-              sleep 2
-            done
-
-            echo "❌ Health check failed!"
-            docker compose logs app
-            exit 1
-          DEPLOY_SCRIPT
-
-      - name: ✅ Verify deployment
-        run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-            echo "=== Container Status ==="
-            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            echo ""
-            echo "=== Health Check ==="
-            curl -s http://localhost:3000/health | python3 -m json.tool || true
-          EOF
+            docker ps
+            curl http://localhost:3000/health
